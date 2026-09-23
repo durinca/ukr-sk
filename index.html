@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ukrajinčina → Slovenčina</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1d2330; --muted:#667085; --accent:#0057b7; --line:#d9dde3; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171c; --card:#1d2128; --text:#e8eaed; --muted:#9aa3b0; --accent:#4d94ff; --line:#333a44; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 system-ui, sans-serif; }
+  main { max-width:1100px; margin:0 auto; padding:24px 16px; }
+  h1 { font-size:1.4rem; margin:0 0 16px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:760px) { .grid { grid-template-columns:1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; display:flex; flex-direction:column; gap:10px; }
+  label { font-weight:600; }
+  textarea { width:100%; min-height:320px; resize:vertical; padding:10px; font:inherit; font-size:1.05rem;
+             border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--text); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  button { font:inherit; padding:8px 14px; border-radius:8px; border:1px solid var(--line);
+           background:var(--card); color:var(--text); cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:disabled { opacity:.5; cursor:default; }
+  select { font:inherit; padding:6px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--text); max-width:100%; }
+  .status { color:var(--muted); font-size:.9rem; min-height:1.3em; }
+  .speed { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:.9rem; }
+  .speedbar { margin-top:16px; }
+  .speed input { width:180px; }
+  button.preset.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🇺🇦 Ukrajinčina → 🇸🇰 Slovenčina</h1>
+  <div class="grid">
+    <section class="card">
+      <label for="uk">Ukrajinský text</label>
+      <textarea id="uk" placeholder="Sem vložte ukrajinský text…"></textarea>
+      <div class="row">
+        <button class="primary" id="translate">Preložiť</button>
+        <button id="speakUk">🔊 Čítať</button>
+        <button id="stop">⏹ Stop</button>
+        <button id="clear">Vymazať</button>
+      </div>
+      <select id="voiceUk" title="Ukrajinský hlas"></select>
+    </section>
+    <section class="card">
+      <label for="sk">Slovenský preklad</label>
+      <textarea id="sk" placeholder="Tu sa zobrazí preklad…"></textarea>
+      <div class="row">
+        <button id="speakSk">🔊 Čítať</button>
+        <button id="copy">Kopírovať</button>
+      </div>
+      <select id="voiceSk" title="Slovenský hlas"></select>
+    </section>
+  </div>
+  <div class="card speedbar">
+    <label>Rýchlosť čítania</label>
+    <div class="row">
+      <button class="preset" data-rate="0.5">🐢 Veľmi pomaly</button>
+      <button class="preset" data-rate="0.7">Pomaly</button>
+      <button class="preset" data-rate="1">Normálne</button>
+      <span class="speed"><input type="range" id="rate" min="0.3" max="1.5" step="0.05" value="0.7"> <span id="rateVal"></span></span>
+    </div>
+  </div>
+  <p class="status" id="status"></p>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const status = msg => $('status').textContent = msg;
+
+// ---------- Translation ----------
+// Split long text into chunks (by lines/sentences) so each request stays small.
+function chunk(text, max = 1500) {
+  const parts = text.split(/(?<=[.!?…\n])/);
+  const out = []; let cur = '';
+  for (const p of parts) {
+    if ((cur + p).length > max && cur) { out.push(cur); cur = ''; }
+    cur += p;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+async function translateChunk(q) {
+  try {
+    const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=uk&tl=sk&dt=t&q=' + encodeURIComponent(q);
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(r.status);
+    const data = await r.json();
+    return data[0].map(s => s[0]).join('');
+  } catch (e) {
+    // Fallback: MyMemory (max ~500 chars per request)
+    const pieces = chunk(q, 450); let res = '';
+    for (const p of pieces) {
+      const r = await fetch('https://api.mymemory.translated.net/get?langpair=uk|sk&q=' + encodeURIComponent(p));
+      const d = await r.json();
+      res += d.responseData.translatedText + ' ';
+    }
+    return res.trim();
+  }
+}
+
+$('translate').onclick = async () => {
+  const text = $('uk').value.trim();
+  if (!text) return status('Najprv vložte text.');
+  $('translate').disabled = true;
+  status('Prekladám…');
+  try {
+    const chunks = chunk(text);
+    let out = '';
+    for (let i = 0; i < chunks.length; i++) {
+      status(`Prekladám… (${i + 1}/${chunks.length})`);
+      out += await translateChunk(chunks[i]);
+    }
+    $('sk').value = out;
+    status('Hotovo.');
+  } catch (e) {
+    status('Preklad zlyhal – skontrolujte internetové pripojenie.');
+  } finally {
+    $('translate').disabled = false;
+  }
+};
+
+// ---------- Text to speech ----------
+let voices = [];
+function fillVoices() {
+  voices = speechSynthesis.getVoices();
+  for (const [sel, lang] of [['voiceUk', 'uk'], ['voiceSk', 'sk']]) {
+    const list = voices.filter(v => v.lang.toLowerCase().startsWith(lang));
+    const el = $(sel), prev = el.value;
+    el.innerHTML = list.length
+      ? list.map(v => `<option value="${v.name}">${v.name}</option>`).join('')
+      : `<option value="">Online hlas (Google)</option>`;
+    if (prev) el.value = prev;
+  }
+}
+speechSynthesis.onvoiceschanged = fillVoices;
+fillVoices();
+
+// Online fallback: Google Translate voice, played part by part through an <audio> element.
+const audio = new Audio();
+let queue = [];
+function playNext() {
+  const next = queue.shift();
+  if (!next) return status('');
+  audio.src = next;
+  audio.playbackRate = +$('rate').value;
+  audio.play().catch(() => status('Čítanie zlyhalo – skontrolujte internetové pripojenie.'));
+}
+audio.onended = playNext;
+audio.onerror = () => { status('Čítanie zlyhalo – skontrolujte internetové pripojenie.'); queue = []; };
+
+function speakOnline(text, lang) {
+  const tl = lang.slice(0, 2);
+  queue = chunk(text, 180).map(p => p.trim()).filter(Boolean).map(p =>
+    `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${tl}&q=${encodeURIComponent(p)}`);
+  status('Čítam (online hlas)…');
+  playNext();
+}
+
+function stopAll() {
+  speechSynthesis.cancel();
+  queue = []; audio.pause(); audio.removeAttribute('src');
+}
+
+function speak(text, lang, voiceName) {
+  stopAll();
+  if (!text.trim()) return status('Nie je čo čítať.');
+  const v = voices.find(v => v.name === voiceName);
+  // No installed voice for this language → use the online voice instead.
+  if (!v) return speakOnline(text, lang);
+  // Speak in pieces – some browsers stop long utterances after ~15 s.
+  for (const part of chunk(text, 200)) {
+    const u = new SpeechSynthesisUtterance(part);
+    u.lang = lang;
+    u.rate = +$('rate').value;
+    u.voice = v;
+    speechSynthesis.speak(u);
+  }
+}
+
+$('speakUk').onclick = () => speak($('uk').value, 'uk-UA', $('voiceUk').value);
+$('speakSk').onclick = () => speak($('sk').value, 'sk-SK', $('voiceSk').value);
+$('stop').onclick = () => { stopAll(); status(''); };
+$('clear').onclick = () => { $('uk').value = ''; $('sk').value = ''; stopAll(); status(''); };
+$('copy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('sk').value); status('Skopírované.'); }
+  catch { $('sk').select(); document.execCommand('copy'); status('Skopírované.'); }
+};
+// ---------- Speed ----------
+function setRate(r) {
+  $('rate').value = r;
+  $('rateVal').textContent = Math.round(r * 100) + ' %';
+  document.querySelectorAll('.preset').forEach(b => b.classList.toggle('active', +b.dataset.rate === +r));
+  audio.playbackRate = +r; // applies immediately to the online voice
+  try { localStorage.setItem('rate', r); } catch {}
+}
+document.querySelectorAll('.preset').forEach(b => b.onclick = () => setRate(b.dataset.rate));
+$('rate').oninput = () => setRate($('rate').value);
+let saved = null;
+try { saved = localStorage.getItem('rate'); } catch {}
+setRate(saved || 0.7);
+
+$('uk').addEventListener('keydown', e => { if (e.ctrlKey && e.key === 'Enter') $('translate').click(); });
+</script>
+</body>
+</html>
